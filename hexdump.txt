@@ -1,0 +1,83 @@
+BHTTP/1 Example Exchange
+========================
+
+Request:
+GET /index.html
+Stream ID: 1
+Flags: END_STREAM
+
+42 48 01 01 01 00 00 0E 00 00 00 01
+01 00 0B 2F 69 6E 64 65 78 2E 68 74 6D 6C
+
+Request frame header:
+42 48          Magic = "BH"
+01             Version = 1
+01             Type = REQUEST
+01             Flags = END_STREAM
+00 00 0E       Payload Length = 14
+00 00 00 01    Stream ID = 1
+
+Request payload:
+01             Method = GET
+00 0B          Path Length = 11
+2F 69 6E 64 65 78 2E 68 74 6D 6C
+               Path = /index.html
+
+
+Response:
+Status: 200
+Stream ID: 1
+Content-Length: 197
+Content-Type: text/html
+
+42 48 01 02 01 00 00 DA 00 00 00 01
+00 C8 02
+01 00 03 31 39 37
+02 00 09 74 65 78 74 2F 68 74 6D 6C
+3C 21 44 4F 43 54 59 50 45 20 68 74 6D 6C 3E
+0A 3C 68 74 6D 6C 3E 0A
+3C 68 65 61 64 3E 0A
+20 20 20 20 3C 74 69 74 6C 65 3E 42 69 6E 61 72 79
+20 48 54 54 50 20 50 72 6F 74 6F 63 6F 6C 3C 2F
+74 69 74 6C 65 3E 0A
+3C 2F 68 65 61 64 3E 0A
+3C 62 6F 64 79 3E 0A
+20 20 20 20 3C 68 31 3E 48 65 6C 6C 6F 20 66 72 6F
+6D 20 62 73 65 72 76 65 21 3C 2F 68 31 3E 0A
+20 20 20 20 3C 70 3E 54 68 69 73 20 66 69 6C 65 20
+77 61 73 20 73 65 72 76 65 64 20 75 73 69 6E 67 20
+61 20 63 75 73 74 6F 6D 20 62 69 6E 61 72 79 20
+70 72 6F 74 6F 63 6F 6C 2E 3C 2F 70 3E 0A
+3C 2F 62 6F 64 79 3E 0A 3C 2F 68 74 6D 6C 3E 0A
+
+Response frame header:
+42 48          Magic = "BH"
+01             Version = 1
+02             Type = RESPONSE
+01             Flags = END_STREAM
+00 00 DA       Payload Length = 218
+00 00 00 01    Stream ID = 1
+
+Response payload:
+00 C8          Status Code = 200
+02             Header Count = 2
+
+01 00 03 31 39 37
+               Header ID = 0x01
+               Value Length = 3
+               Value = "197"
+               Header = Content-Length
+
+02 00 09 74 65 78 74 2F 68 74 6D 6C
+               Header ID = 0x02
+               Value Length = 9
+               Value = "text/html"
+               Header = Content-Type
+
+Remaining bytes:
+               Response body = contents of www/index.html
+
+Note:
+The response Stream ID matches the request Stream ID.
+The END_STREAM flag terminates this request/response stream,
+not the underlying persistent TCP connection.

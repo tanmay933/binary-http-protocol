@@ -92,9 +92,7 @@ The maximum payload size is:
 16,777,215 bytes
 ```
 
-## 5.4 Stream ID
-
-### Stream ID
+### 5.4 Stream ID
 
 Each request/response exchange uses a unique non-zero Stream ID.
 
@@ -258,3 +256,456 @@ For a successful file response, the server sends:
 The Header Count field specifies the number of encoded headers.
 
 The Body follows all encoded headers and contains the requested file contents.
+
+# 10. ERROR Frame
+
+An ERROR frame is reserved for protocol-level errors that prevent normal
+request/response processing.
+
+The frame type is:
+
+```text
+0x03
+
+# 11. MIME Types
+
+The server determines the Content-Type response header from the requested
+file extension.
+
+Supported MIME types are:
+
+| Extension | MIME Type |
+|---|---|
+| `.html` | `text/html` |
+| `.htm` | `text/html` |
+| `.txt` | `text/plain` |
+| `.css` | `text/css` |
+| `.js` | `application/javascript` |
+| `.json` | `application/json` |
+| `.png` | `image/png` |
+| `.jpg` | `image/jpeg` |
+| `.jpeg` | `image/jpeg` |
+| `.gif` | `image/gif` |
+
+Files with an unsupported extension use:
+
+```text
+application/octet-stream
+```
+
+For successful file responses, the server includes both:
+
+```text
+Content-Length
+Content-Type
+```
+
+in the RESPONSE payload.
+
+# 12. Connection Lifecycle
+
+BHTTP/1 uses a persistent TCP connection.
+
+The connection lifecycle is:
+
+```text
+Client                         Server
+  |                              |
+  |------ TCP connection ------->|
+  |                              |
+  |------ REQUEST, Stream 1 ----->|
+  |<----- RESPONSE, Stream 1 ----|
+  |                              |
+  |------ REQUEST, Stream 2 ----->|
+  |<----- RESPONSE, Stream 2 ----|
+  |                              |
+  |------ REQUEST, Stream 3 ----->|
+  |<----- RESPONSE, Stream 3 ----|
+  |                              |
+  |---------- TCP close --------->|
+```
+
+The TCP connection remains open between requests.
+
+Each request receives a unique Stream ID.
+
+For example:
+
+```text
+Stream 1 -> /index.html
+Stream 2 -> /does-not-exist.html
+Stream 3 -> /hello.txt
+```
+
+The server uses the same Stream ID in the corresponding response.
+
+The END_STREAM flag indicates that the logical request/response stream has
+finished. It does not terminate the TCP connection.
+
+# 13. Security and Path Handling
+
+The server treats the configured document root as the boundary for all
+requested resources.
+
+A requested path is converted into a filesystem path relative to the
+document root.
+
+The server performs multiple checks before serving a file:
+
+- The path must begin with `/`.
+- Path traversal components such as `..` are rejected.
+- The resolved path must remain inside the configured document root.
+- The requested path must refer to a regular file.
+- Files outside the document root are never served.
+
+For example:
+
+```text
+/index.html
+```
+
+is valid.
+
+The following requests are rejected:
+
+```text
+/../secret.txt
+/foo/../../secret.txt
+```
+
+These requests result in:
+
+```text
+400 Bad Request
+```
+
+This prevents a client from using path traversal to access files outside the
+server's configured document root.
+
+# 14. Error Handling
+
+BHTTP/1 uses HTTP-style status codes inside RESPONSE frames for errors that
+are associated with a client request.
+
+| Status | Meaning | Example |
+|---|---|---|
+| 200 | Success | Requested file exists |
+| 400 | Bad Request | Invalid request or path traversal |
+| 404 | Not Found | Requested file does not exist |
+| 500 | Internal Server Error | Unexpected server-side failure |
+
+Example 404 response:
+
+```text
+Status Code = 404
+Header Count = 1
+Content-Length = 0
+```
+
+The response uses the same Stream ID as the corresponding request.
+
+Protocol-level errors that cannot be represented as normal request responses
+are reserved for the ERROR frame type.
+
+# 15. Unknown Frames
+
+The Length field allows implementations to skip frames they do not understand.
+
+If a receiver encounters an unknown frame type, it reads the frame header,
+uses the Length field to determine the payload size, skips that payload, and
+continues processing the connection.
+
+This allows future versions of BHTTP/1 to introduce additional frame types
+without requiring older implementations to terminate the TCP connection.
+
+# 16. Example Exchange
+
+A complete request for `/index.html` uses Stream ID 1.
+
+## Request
+
+```text
+Frame Type: REQUEST
+Stream ID: 1
+Flags: END_STREAM
+
+Method: GET
+Path: /index.html
+```
+
+The request payload is:
+
+```text
+01
+00 0B
+2F 69 6E 64 65 78 2E 68 74 6D 6C
+```
+
+where:
+
+```text
+01       = GET
+00 0B    = Path Length = 11
+2F ...   = /index.html
+```
+
+## Response
+
+```text
+Frame Type: RESPONSE
+Stream ID: 1
+Flags: END_STREAM
+
+Status Code: 200
+Header Count: 2
+
+Content-Length: 197
+Content-Type: text/html
+
+Body:
+contents of www/index.html
+```
+
+The response Stream ID matches the request Stream ID.
+
+A complete annotated byte-level example is provided in:
+
+```text
+hexdump.txt
+```
+
+# 17. Persistent Connection Example
+
+The client can request multiple resources using one TCP connection.
+
+Example:
+
+```bash
+./bcurl -v localhost:9000 /index.html /does-not-exist.html
+```
+
+The client sends:
+
+```text
+Stream 1 -> GET /index.html
+Stream 2 -> GET /does-not-exist.html
+```
+
+The server responds:
+
+```text
+Stream 1 -> 200
+Stream 2 -> 404
+```
+
+Both exchanges occur over the same TCP connection.
+
+This demonstrates the persistent connection behavior of BHTTP/1.
+
+# 18. Testing
+
+The implementation was tested using the BHTTP/1 client and server.
+
+## 18.1 Successful Request
+
+```bash
+./bcurl -v localhost:9000 /index.html
+```
+
+Expected result:
+
+```text
+Status: 200
+Content-Length: 197
+Content-Type: text/html
+```
+
+The response body contains the contents of:
+
+```text
+www/index.html
+```
+
+## 18.2 Missing Resource
+
+```bash
+./bcurl -v localhost:9000 /does-not-exist.html
+```
+
+Expected result:
+
+```text
+Status: 404
+```
+
+The server remains available for subsequent requests.
+
+## 18.3 Path Traversal Protection
+
+```bash
+./bcurl -v localhost:9000 /../secret.txt
+```
+
+Expected result:
+
+```text
+Status: 400
+```
+
+Another traversal attempt:
+
+```bash
+./bcurl -v localhost:9000 /foo/../../secret.txt
+```
+
+Expected result:
+
+```text
+Status: 400
+```
+
+## 18.4 Persistent Connection
+
+```bash
+./bcurl -v localhost:9000 /index.html /does-not-exist.html
+```
+
+Expected result:
+
+```text
+=== Stream 1: /index.html ===
+Status: 200
+
+=== Stream 2: /does-not-exist.html ===
+Status: 404
+```
+
+This test verifies that multiple request/response exchanges use the same
+underlying TCP connection while maintaining different Stream IDs.
+
+# 19. Building the Project
+
+Compile the server:
+
+```bash
+gcc -Wall -Wextra -O2 -o bserve bserve.c
+```
+
+Compile the client:
+
+```bash
+gcc -Wall -Wextra -O2 -o bcurl bcurl.c
+```
+
+# 20. Running the Server
+
+Start the server on port 9000:
+
+```bash
+./bserve 9000
+```
+
+The server uses the `www/` directory as its document root.
+
+Example:
+
+```text
+bserve listening on port 9000
+```
+
+# 21. Running the Client
+
+Request a single file:
+
+```bash
+./bcurl localhost:9000 /index.html
+```
+
+Enable verbose frame output:
+
+```bash
+./bcurl -v localhost:9000 /index.html
+```
+
+Request multiple files over the same TCP connection:
+
+```bash
+./bcurl -v localhost:9000 /index.html /does-not-exist.html
+```
+
+# 22. Project Structure
+
+```text
+binary-http-protocol/
+├── bserve.c
+├── bcurl.c
+├── README.md
+├── hexdump.txt
+└── www/
+    └── index.html
+```
+
+## Components
+
+### bserve.c
+
+BHTTP/1 server implementation.
+
+Responsibilities include:
+
+- TCP socket creation
+- accepting client connections
+- reading BHTTP/1 frames
+- validating frame headers
+- decoding REQUEST frames
+- validating requested paths
+- reading files
+- determining MIME types
+- constructing RESPONSE frames
+- returning status codes
+- maintaining persistent TCP connections
+
+### bcurl.c
+
+BHTTP/1 client implementation.
+
+Responsibilities include:
+
+- establishing the TCP connection
+- constructing REQUEST frames
+- assigning Stream IDs
+- sending multiple requests over one connection
+- receiving RESPONSE frames
+- decoding response status and headers
+- displaying response bodies
+- verbose frame/hexdump output
+
+### www/
+
+Server document root containing resources that can be requested by clients.
+
+### hexdump.txt
+
+Contains an annotated example of the BHTTP/1 binary wire format.
+
+# 23. Design Summary
+
+BHTTP/1 demonstrates the construction of a custom application-layer protocol
+over TCP.
+
+The protocol defines:
+
+- a fixed binary frame header
+- explicit payload lengths
+- network byte order
+- request and response frame types
+- Stream IDs
+- persistent TCP connections
+- binary response headers
+- HTTP-style status codes
+- MIME type handling
+- path traversal protection
+- extensibility through unknown-frame skipping
+
+The implementation provides an end-to-end client/server system capable of
+requesting and serving files using the custom BHTTP/1 binary protocol.
