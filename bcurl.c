@@ -2,12 +2,13 @@
  * bcurl.c — BHTTP/1 client
  *
  * A minimal command-line client for the custom binary BHTTP/1 protocol.
- * Connects to a server over TCP, sends a single REQUEST frame, reads and
- * decodes the corresponding RESPONSE frame, and prints the result in a
- * human-readable form.
+ * Connects to a server over TCP and, on a single persistent connection,
+ * sends a REQUEST frame for each path given on the command line, reading
+ * and decoding the corresponding RESPONSE frame before sending the next
+ * request. Stream IDs start at 1 and increment for each new request.
  *
  * Usage:
- *   ./bcurl [-v] <host:port> <path>
+ *   ./bcurl [-v] <host:port> <path1> [path2] [path3] ...
  *
  * Build:
  *   cc -std=c11 -Wall -Wextra -O2 -o bcurl bcurl.c
@@ -237,9 +238,9 @@ static int connect_to(const char *host, const char *port) {
  * ============================================================ */
 
 /* Builds a complete REQUEST frame (header + payload) for a GET request
- * on the given path. Returns a malloc'd buffer via *out_frame and its
- * length via *out_len. Returns 0 on success, -1 on failure (e.g. path
- * too long to fit the uint16 length field). */
+ * on the given path and stream ID. Returns a malloc'd buffer via
+ * *out_frame and its length via *out_len. Returns 0 on success, -1 on
+ * failure (e.g. path too long to fit the uint16 length field). */
 static int build_get_request_frame(uint32_t stream_id, const char *path,
                                     uint8_t **out_frame, size_t *out_len) {
     size_t path_len = strlen(path);
@@ -276,9 +277,10 @@ static int build_get_request_frame(uint32_t stream_id, const char *path,
 
 /* Reads one complete frame (header + payload) from fd.
  * Returns 0 on success, -1 on any I/O or protocol-level framing error
- * (bad magic/version, truncated read, payload too large). On success,
- * *out_payload is malloc'd (possibly zero-length, in which case it may
- * be NULL) and must be freed by the caller. */
+ * (bad magic/version, truncated read, payload too large) — such an
+ * error means the connection can no longer be trusted and must be
+ * closed. On success, *out_payload is malloc'd (possibly NULL if the
+ * payload length is zero) and must be freed by the caller. */
 static int read_frame(int fd, frame_header_t *hdr,
                        uint8_t **out_payload, uint32_t *out_payload_len) {
     uint8_t raw_header[FRAME_HEADER_SIZE];
@@ -322,7 +324,10 @@ static int read_frame(int fd, frame_header_t *hdr,
  *   1 byte   Header Count
  *   headers...
  *   body...
- * Returns 0 on success, -1 if the payload is malformed. */
+ * Returns 0 on success, -1 if the payload is malformed. This is a
+ * payload-level decoding error, not a connection error — the exact
+ * number of bytes declared by the frame header has already been
+ * consumed, so the connection framing remains intact either way. */
 static int print_response_payload(const uint8_t *payload, uint32_t len) {
     if (len < 3) {
         fprintf(stderr, "error: response payload too short\n");
@@ -373,63 +378,27 @@ static int print_response_payload(const uint8_t *payload, uint32_t len) {
 }
 
 /* ============================================================
- * main
+ * Single request/response exchange on an already-open connection.
+ *
+ * Sends one REQUEST frame for `path` using `stream_id`, then reads and
+ * prints the corresponding RESPONSE. The connection itself is neither
+ * opened nor closed here, so the same fd can be reused for further
+ * exchanges — END_STREAM only terminates this logical stream, not the
+ * underlying TCP connection.
+ *
+ * Returns 0 if the exchange completed (regardless of the HTTP-style
+ * status code returned), or -1 if the connection is no longer usable
+ * (I/O error, malformed frame header) and the caller must stop sending
+ * further requests.
  * ============================================================ */
-
-static void usage(const char *prog) {
-    fprintf(stderr, "usage: %s [-v] <host:port> <path>\n", prog);
-}
-
-int main(int argc, char **argv) {
-    int verbose = 0;
-    const char *hostport_arg = NULL;
-    const char *path_arg = NULL;
-
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-v") == 0) {
-            verbose = 1;
-        } else if (hostport_arg == NULL) {
-            hostport_arg = argv[i];
-        } else if (path_arg == NULL) {
-            path_arg = argv[i];
-        } else {
-            usage(argv[0]);
-            return 1;
-        }
-    }
-
-    if (hostport_arg == NULL || path_arg == NULL) {
-        usage(argv[0]);
-        return 1;
-    }
-
-    /* A server closing/resetting the connection must not kill this
-     * client via SIGPIPE when we write() to it. */
-    signal(SIGPIPE, SIG_IGN);
-
-    char *host = NULL, *port = NULL;
-    if (parse_host_port(hostport_arg, &host, &port) != 0) {
-        fprintf(stderr, "error: invalid host:port '%s'\n", hostport_arg);
-        return 1;
-    }
-
-    int fd = connect_to(host, port);
-    if (fd < 0) {
-        free(host);
-        free(port);
-        return 1;
-    }
-    free(host);
-    free(port);
-
-    uint32_t stream_id = FIRST_STREAM_ID;
+static int do_exchange(int fd, uint32_t stream_id, const char *path, int verbose) {
+    printf("=== Stream %u: %s ===\n", stream_id, path);
 
     uint8_t *req_frame = NULL;
     size_t req_frame_len = 0;
-    if (build_get_request_frame(stream_id, path_arg, &req_frame, &req_frame_len) != 0) {
+    if (build_get_request_frame(stream_id, path, &req_frame, &req_frame_len) != 0) {
         fprintf(stderr, "error: failed to build request (path too long?)\n");
-        close(fd);
-        return 1;
+        return 0; /* not a connection-level failure; move on to next path */
     }
 
     if (verbose) {
@@ -439,8 +408,7 @@ int main(int argc, char **argv) {
     if (write_full(fd, req_frame, req_frame_len) != (ssize_t)req_frame_len) {
         fprintf(stderr, "error: failed to send request: %s\n", strerror(errno));
         free(req_frame);
-        close(fd);
-        return 1;
+        return -1; /* connection is broken */
     }
     free(req_frame);
 
@@ -449,8 +417,7 @@ int main(int argc, char **argv) {
     uint32_t resp_payload_len = 0;
 
     if (read_frame(fd, &resp_hdr, &resp_payload, &resp_payload_len) != 0) {
-        close(fd);
-        return 1;
+        return -1; /* connection is broken or unrecoverably desynced */
     }
 
     if (verbose) {
@@ -470,29 +437,27 @@ int main(int argc, char **argv) {
     }
 
     if (resp_hdr.stream_id != stream_id) {
+        /* The frame itself was read correctly (exact declared length
+         * consumed), so the connection is still byte-aligned. This is a
+         * logical mismatch, not an I/O error, so we report it and move
+         * on rather than tearing down the connection. */
         fprintf(stderr, "error: response stream ID %u does not match request stream ID %u\n",
                 resp_hdr.stream_id, stream_id);
         free(resp_payload);
-        close(fd);
-        return 1;
+        printf("\n");
+        return 0;
     }
 
-    int exit_code = 0;
-
     if (resp_hdr.type == FRAME_TYPE_RESPONSE) {
-        if (print_response_payload(resp_payload, resp_payload_len) != 0) {
-            exit_code = 1;
-        }
+        print_response_payload(resp_payload, resp_payload_len);
     } else if (resp_hdr.type == FRAME_TYPE_ERROR) {
         fprintf(stderr, "error: server sent an ERROR frame (%u bytes payload)\n",
                 resp_payload_len);
         if (verbose) {
             hex_dump("ERROR payload", resp_payload, resp_payload_len);
         }
-        exit_code = 1;
     } else {
         fprintf(stderr, "error: unexpected frame type %u in response\n", resp_hdr.type);
-        exit_code = 1;
     }
 
     if (!(resp_hdr.flags & FLAG_END_STREAM)) {
@@ -500,13 +465,69 @@ int main(int argc, char **argv) {
     }
 
     free(resp_payload);
+    printf("\n");
+    return 0;
+}
 
-    /* The current operation (single request/response) is complete; only
-     * now is it safe to close the connection. The code above reads a
-     * full frame at a time via read_frame()/read_full(), so extending
-     * this to send further REQUEST frames on the same fd before closing
-     * would be a straightforward loop around the request/response logic. */
+/* ============================================================
+ * main
+ * ============================================================ */
+
+static void usage(const char *prog) {
+    fprintf(stderr, "usage: %s [-v] <host:port> <path1> [path2] [path3] ...\n", prog);
+}
+
+int main(int argc, char **argv) {
+    int verbose = 0;
+    const char *hostport_arg = NULL;
+    const char *paths[argc]; /* upper bound; argc is a safe max size */
+    int path_count = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-v") == 0) {
+            verbose = 1;
+        } else if (hostport_arg == NULL) {
+            hostport_arg = argv[i];
+        } else {
+            paths[path_count++] = argv[i];
+        }
+    }
+
+    if (hostport_arg == NULL || path_count == 0) {
+        usage(argv[0]);
+        return 1;
+    }
+
+    /* A server closing/resetting the connection must not kill this
+     * client via SIGPIPE when we write() to it. */
+    signal(SIGPIPE, SIG_IGN);
+
+    char *host = NULL, *port = NULL;
+    if (parse_host_port(hostport_arg, &host, &port) != 0) {
+        fprintf(stderr, "error: invalid host:port '%s'\n", hostport_arg);
+        return 1;
+    }
+
+    int fd = connect_to(host, port);
+    free(host);
+    free(port);
+    if (fd < 0) {
+        return 1;
+    }
+
+    /* Exactly one TCP connection is used for every request below; the
+     * stream ID increments per request but the socket is never
+     * re-opened or closed until all paths have been processed. */
+    int exit_code = 0;
+    for (int i = 0; i < path_count; i++) {
+        uint32_t stream_id = (uint32_t)(FIRST_STREAM_ID + i);
+        if (do_exchange(fd, stream_id, paths[i], verbose) != 0) {
+            fprintf(stderr, "error: connection lost; aborting remaining requests\n");
+            exit_code = 1;
+            break;
+        }
+    }
+
     close(fd);
-
     return exit_code;
 }
