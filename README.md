@@ -226,7 +226,35 @@ The RESPONSE payload begins with:
 
 Supported status codes:
 
-- `200` — requested resource was found
-- `400` — malformed or invalid request
-- `404` — requested resource was not found
-- `500` — internal server error
+- `200` — Request successful
+- `400` — Malformed or invalid request
+- `404` — Requested resource not found
+- `500` — Internal server error
+
+### 9.1 Response Header Encoding
+
+Each response header is encoded as:
+
+| Field | Size | Description |
+|---|---:|---|
+| Header ID | 1 byte | Identifies the header name |
+| Value Length | 2 bytes | Length of the header value |
+| Value | N bytes | Header value bytes |
+
+All multi-byte values use network byte order (big-endian).
+
+Defined header IDs:
+
+| ID | Header |
+|---|---|
+| `0x01` | Content-Length |
+| `0x02` | Content-Type |
+
+For a successful file response, the server sends:
+
+- `Content-Length`: number of bytes in the response body
+- `Content-Type`: MIME type of the requested file
+
+The Header Count field specifies the number of encoded headers.
+
+The Body follows all encoded headers and contains the requested file contents.
