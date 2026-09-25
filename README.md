@@ -94,13 +94,15 @@ The maximum payload size is:
 
 ## 5.4 Stream ID
 
-The Stream ID is a 32-bit unsigned integer.
+### Stream ID
 
-The current implementation uses:
+Each request/response exchange uses a unique non-zero Stream ID.
 
-```text
-Stream ID = 1
-```
+- The client starts with Stream ID `1`.
+- Each new request on the same TCP connection increments the Stream ID.
+- The server uses the same Stream ID in the corresponding RESPONSE frame.
+- `END_STREAM` means that no more frames will be sent for that request/response stream.
+- `END_STREAM` does NOT close the underlying TCP connection.
 
 A future version may support multiple simultaneous streams.
 
