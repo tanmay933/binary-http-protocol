@@ -1,0 +1,66 @@
+BHTTP/1 — Annotated Hexdump of One Complete Request/Response
+============================================================
+
+Fixture: www/hex-example.txt
+Body: "Hello!" (6 bytes)
+
+============================================================
+REQUEST FRAME
+============================================================
+GET /hex-example.txt
+Stream ID: 1
+Flags: END_STREAM
+
+42 48 01 01 01 00 00 13 00 00 00 01
+01 00 10 2F 68 65 78 2D 65 78 61 6D 70 6C 65 2E 74 78 74
+
+Request frame header:
+42 48          Magic = "BH"
+01             Version = 1
+01             Type = REQUEST
+01             Flags = END_STREAM
+00 00 13       Payload Length = 19
+00 00 00 01    Stream ID = 1
+
+Request payload:
+01             Method = GET
+00 10          Path Length = 16
+2F 68 65 78 2D 65 78 61 6D 70 6C 65 2E 74 78 74
+               Path = /hex-example.txt
+
+============================================================
+RESPONSE FRAME
+============================================================
+Status: 200
+Stream ID: 1
+Content-Length: 6
+Content-Type: text/plain
+
+42 48 01 02 01 00 00 1A 00 00 00 01
+00 C8 02
+01 00 01 36 02 00 0A 74 65 78 74 2F 70 6C 61 69 6E 48 65 6C 6C 6F 21
+
+Response frame header:
+42 48          Magic = "BH"
+01             Version = 1
+02             Type = RESPONSE
+01             Flags = END_STREAM
+00 00 1A       Payload Length = 26
+00 00 00 01    Stream ID = 1
+
+Response payload:
+00 C8          Status Code = 200
+02             Header Count = 2
+01 00 01 36    Header ID = 0x01, Value Length = 1, Value = "6"
+               Header = Content-Length
+02 00 0A 74 65 78 74 2F 70 6C 61 69 6E
+               Header ID = 0x02, Value Length = 10, Value = "text/plain"
+               Header = Content-Type
+48 65 6C 6C 6F 21  Response body = "Hello!"
+
+============================================================
+NOTES
+============================================================
+The response Stream ID matches the request Stream ID.
+The END_STREAM flag terminates this request/response stream,
+not the underlying persistent TCP connection.

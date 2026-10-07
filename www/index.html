@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BHTTP Control Panel</title>
+    <style>
+        :root {
+            --bg: #07111f;
+            --panel: #0d1b2d;
+            --panel-2: #10243a;
+            --text: #e7eef7;
+            --muted: #8ea3b8;
+            --accent: #53d8a3;
+            --accent-2: #65a8ff;
+            --border: rgba(255,255,255,.09);
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: radial-gradient(circle at 15% 10%, #123252 0, transparent 34%), var(--bg);
+            color: var(--text);
+        }
+        .shell { width: min(1080px, calc(100% - 32px)); margin: auto; padding: 34px 0 50px; }
+        header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 28px; }
+        .eyebrow { color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+        h1 { margin: 7px 0 8px; font-size: clamp(32px, 5vw, 52px); letter-spacing: -.04em; }
+        .subtitle { margin: 0; max-width: 680px; color: var(--muted); line-height: 1.6; }
+        .status { border: 1px solid rgba(83,216,163,.28); background: rgba(83,216,163,.08); border-radius: 999px; padding: 9px 14px; white-space: nowrap; color: var(--accent); font-size: 13px; font-weight: 700; }
+        .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 8px; box-shadow: 0 0 14px var(--accent); }
+        .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+        .card { background: linear-gradient(145deg, rgba(16,36,58,.95), rgba(13,27,45,.95)); border: 1px solid var(--border); border-radius: 18px; padding: 20px; box-shadow: 0 18px 50px rgba(0,0,0,.18); }
+        .metric-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+        .metric { font-size: 25px; font-weight: 800; margin-top: 9px; }
+        .layout { display: grid; grid-template-columns: 1.4fr .9fr; gap: 14px; margin-top: 14px; }
+        .card h2 { font-size: 17px; margin: 0 0 15px; }
+        .flow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .node { padding: 13px 15px; border-radius: 12px; background: #0a1727; border: 1px solid var(--border); font-weight: 700; }
+        .arrow { color: var(--accent-2); font-size: 20px; }
+        .detail { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .detail div { padding: 13px; border-radius: 12px; background: rgba(255,255,255,.035); }
+        .detail span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+        code { color: #b9d6ff; font-family: "SFMono-Regular", Consolas, monospace; }
+        .terminal { margin-top: 14px; background: #050c15; border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+        .terminal-bar { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+        pre { margin: 0; padding: 18px; overflow-x: auto; color: #c9d7e6; line-height: 1.65; }
+        .accent { color: var(--accent); }
+        .timeline { display: grid; gap: 11px; }
+        .step { display: flex; gap: 12px; align-items: center; }
+        .num { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 9px; background: rgba(101,168,255,.12); color: var(--accent-2); font-weight: 800; font-size: 12px; }
+        footer { margin-top: 24px; color: var(--muted); text-align: center; font-size: 12px; }
+        @media (max-width: 800px) { .grid { grid-template-columns: repeat(2, 1fr); } .layout { grid-template-columns: 1fr; } header { flex-direction: column; } }
+        @media (max-width: 500px) { .grid { grid-template-columns: 1fr; } .shell { width: min(100% - 22px, 1080px); padding-top: 22px; } }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <header>
+            <div>
+                <div class="eyebrow">Network Laboratory</div>
+                <h1>BHTTP Control Panel</h1>
+                <p class="subtitle">A visual interface for the custom BHTTP/1 binary application-layer protocol. Inspect the server configuration, frame structure and request flow from one dashboard.</p>
+            </div>
+            <div class="status"><span class="dot"></span>BHTTP/1 DEMO</div>
+        </header>
+
+        <section class="grid">
+            <div class="card"><div class="metric-label">Transport</div><div class="metric">TCP</div></div>
+            <div class="card"><div class="metric-label">Protocol</div><div class="metric">BHTTP/1</div></div>
+            <div class="card"><div class="metric-label">Frame Header</div><div class="metric">12 bytes</div></div>
+            <div class="card"><div class="metric-label">Clock</div><div class="metric" id="clock">--:--:--</div></div>
+        </section>
+
+        <section class="layout">
+            <div class="card">
+                <h2>Request Pipeline</h2>
+                <div class="flow">
+                    <div class="node">bcurl</div><div class="arrow">→</div>
+                    <div class="node">TCP Socket</div><div class="arrow">→</div>
+                    <div class="node">BHTTP Frame</div><div class="arrow">→</div>
+                    <div class="node">bserve</div>
+                </div>
+                <div class="terminal">
+                    <div class="terminal-bar">example request</div>
+                    <pre>$ ./bcurl -v localhost:9000/index.html
+<span class="accent">GET</span> /index.html
+Stream-ID: 1
+Frame: REQUEST → RESPONSE
+Status: <span class="accent">200 OK</span></pre>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Protocol Details</h2>
+                <div class="detail">
+                    <div><span>Byte order</span><code>Big-endian</code></div>
+                    <div><span>Method</span><code>GET</code></div>
+                    <div><span>Magic</span><code>42 48</code></div>
+                    <div><span>Version</span><code>0x01</code></div>
+                    <div><span>Payload</span><code>24-bit</code></div>
+                    <div><span>Stream ID</span><code>uint32</code></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card" style="margin-top:14px">
+            <h2>How a Request Works</h2>
+            <div class="timeline">
+                <div class="step"><div class="num">01</div><div>Client opens a persistent <strong>TCP connection</strong>.</div></div>
+                <div class="step"><div class="num">02</div><div>A binary <strong>REQUEST frame</strong> carries the resource path and stream ID.</div></div>
+                <div class="step"><div class="num">03</div><div><strong>bserve</strong> validates the path and reads the requested file.</div></div>
+                <div class="step"><div class="num">04</div><div>The server returns a binary <strong>RESPONSE frame</strong> with status, headers and body.</div></div>
+            </div>
+        </section>
+
+        <footer>BHTTP/1 • Custom binary protocol over POSIX sockets • Document root: <code>./www</code></footer>
+    </main>
+
+    <script>
+        function updateClock() {
+            document.getElementById('clock').textContent = new Date().toLocaleTimeString([], { hour12: false });
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+    </script>
+</body>
+</html>
